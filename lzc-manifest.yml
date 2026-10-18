@@ -1,0 +1,192 @@
+# PicImpact 摄影作品站 · 懒猫微服运行清单（LPK V2）
+# 目标环境：lzcos 1.6.2 / lzc-cli 2.0.9（校准留痕见 实测记录/specsync/）
+# 上游：besscroft/PicImpact v3.3.8（镜像随 release 构建分发）
+application:
+  subdomain: picimpact
+  # /picimpact/ 是图片对象路径（S3 直链），由平台「独立鉴权」放行：
+  # 匿名可读（桶策略只开放 s3:GetObject）、写入依赖预签名。其余页面仍走平台鉴权。
+  # 容器内的服务端 S3 调用（删图/预处理）无平台会话，也需要这条放行才能到达 MinIO；
+  # 安全性由存储签名与桶策略保证（见 lzc-seed.mjs 里写入的桶策略）。
+  public_path:
+    - /picimpact
+    - /picimpact/*
+  upstreams:
+    - location: /
+      backend: http://picimpact-web.cloud.lazycat.app.picimpact.lzcapp:80
+      disable_trim_location: true
+  health_check:
+    # 首装要建库、迁移、拉取依赖，给足启动等待时间。
+    test_url: http://picimpact-web.cloud.lazycat.app.picimpact.lzcapp/healthz
+    start_period: 420s
+    timeout: 15s
+  injects:
+    # ── 网盘文件桥接（request 阶段）────────────────────────────────────
+    # 官方《网盘文件选择器/自动拦截》要求 request 与 browser 两侧成对配置；
+    # /__lazycat_file_bridge/* 转发到 file.<boxdomain>，让「保存到网盘」真正落盘、
+    # 并让共享目录按 owner 正确切换文件根。代码取自官方专题（与 misago/wavelog 同版）。
+    - id: lazycat-file-bridge
+      'on': request
+      auth_required: false
+      when:
+        - /__lazycat_file_bridge/*
+      do:
+        - src: |
+            const bridgePrefix = "/__lazycat_file_bridge";
+            const requestHost = String(ctx.request.host || "").split(":")[0].toLowerCase();
+            const firstDot = requestHost.indexOf(".");
+            const method = String(ctx.request.method || "").toUpperCase();
+            if (firstDot <= 0 || !requestHost.endsWith(".heiyu.space") ||
+                !["GET", "HEAD", "PUT"].includes(method)) {
+              ctx.response.send(["GET", "HEAD", "PUT"].includes(method) ? 400 : 405,
+                "Invalid LazyCat file bridge request");
+              return;
+            }
+            const boxDomain = requestHost.slice(firstDot + 1);
+            ctx.headers.del("Origin");
+            ctx.headers.del("Referer");
+            ctx.proxy.to("https://file." + boxDomain, {
+              path: "/files/home" + ctx.request.path.slice(bridgePrefix.length),
+              query: ctx.request.raw_query,
+              use_target_host: true,
+              timeout_ms: 120000,
+              on_fail: "error",
+            });
+    # ── 官方网盘文件选择器（browser 阶段）──────────────────────────────
+    # 拦截 PicImpact 的原生文件入口：
+    #   - 上传照片/视频（<input type=file>，含拖拽上传）；
+    #   - 原图下载与导出（下载锚点/保存选择器）→ 可保存到网盘。
+    # 保持默认 auth_required=true：应用页面不公开（public_path 只放行了对象存储路径），
+    # 匿名请求拿不到 HTML 页；已登录的评审客户端照常执行。
+    - id: open-save-chooser
+      'on': browser
+      when:
+        - /*
+      do:
+        - src: >-
+            file:///lzcapp/pkg/content/lazycat-injects/lzc-file-chooser-inject.js
+          params:
+            diskRoot: /_lzc/files/home
+            fileBridgeRoot: /__lazycat_file_bridge
+            fallbackMime: application/octet-stream
+            locale: auto
+            hooks:
+              fileSystemAccess: true
+              fileInput: true
+              downloadAnchor: true
+    # ── 免密登录 + 账号切换（browser 阶段，自写注入）────────────────────
+    # 首次打开自动进入登录页并以固定审核账号登录；登录页自动填充仅提交一次；
+    # 右下角「切换账号 / 使用其他账号登录 / 启用自动登录」控件避免钉死账号。
+    - id: picimpact-autologin
+      'on': browser
+      auth_required: false
+      when:
+        - /*
+      do:
+        - src: file:///lzcapp/pkg/content/lazycat-injects/picimpact-autologin.js
+          params:
+            email: admin@picimpact.local
+            password: I6yStSzApaEEmaLC
+    # ── 上传页存储默认项（browser 阶段，自写注入）────────────────────
+    # 上游存储选择器默认是 Cloudflare R2（本包未配置），随包可用的是内建 S3 API；
+    # 打开上传页时自动把存储选择器切到「S3 API」，避免评审误选导致上传失败。
+    - id: picimpact-ux
+      'on': browser
+      auth_required: false
+      when:
+        - /*
+      do:
+        - src: file:///lzcapp/pkg/content/lazycat-injects/picimpact-ux.js
+services:
+  # PicImpact 主服务（Next.js standalone + Hono，监听 3000）。
+  # command 覆盖为自持启动脚本：等价镜像内置 script.sh（migrate deploy / db seed / node server.js），
+  # 并在启动后追加幂等种子（创建审核账号、写入存储配置、建桶与桶策略）。
+  picimpact:
+    image: registry.lazycat.cloud/wans/besscroft/picimpact:954337d376d1f336
+    environment:
+      - TZ=Asia/Shanghai
+      - DATABASE_URL=postgresql://picimpact:q70e2sqYYjnAwCtB@picimpact-db:5432/picimpact?schema=public
+      - DIRECT_URL=postgresql://picimpact:q70e2sqYYjnAwCtB@picimpact-db:5432/picimpact?schema=public
+      # 随包分发的固定机密（非本机凭据）；升级/重装必须保持不变，否则会话与签名失效。
+      - BETTER_AUTH_SECRET=wlahcxqVaWVzSdL4MH6taIATRs9qbYPPVgyjAxtZuDneIyI8
+      - BETTER_AUTH_URL=https://{{ .S.AppDomain }}
+      - BETTER_AUTH_PASSKEY_RP_ID={{ .S.AppDomain }}
+      - BETTER_AUTH_PASSKEY_RP_NAME=PicImpact
+      - AUTH_TRUST_HOST=true
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      # 供启动种子脚本使用：应用实际域名（前缀域名/对象直链都基于它拼接）。
+      - LZC_DOMAIN={{ .S.AppDomain }}
+      - LZC_ADMIN_EMAIL=admin@picimpact.local
+      - LZC_ADMIN_PASSWORD=I6yStSzApaEEmaLC
+      # 内置对象存储（RustFS）接入参数：endpoint 使用应用自身域名，
+      # 经 nginx 将 /picimpact/* 原样转发到对象存储（保留路径以通过签名校验）。
+      - LZC_S3_ENDPOINT=https://{{ .S.AppDomain }}
+      - LZC_S3_ACCESS_KEY=picimpact
+      - LZC_S3_SECRET_KEY=7UF2VPoeMz6moQdu
+      - LZC_S3_BUCKET=picimpact
+    command: /bin/sh /lzcapp/pkg/content/picimpact-init/boot.sh
+    depends_on:
+      - picimpact-db
+      - picimpact-s3
+    healthcheck:
+      test: [CMD-SHELL, "node -e \"fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 300s
+
+  # PostgreSQL 数据库（Prisma schema 初始化的目标库）。
+  picimpact-db:
+    image: registry.lazycat.cloud/wans/library/postgres:05a63a2d9d70dc2a
+    environment:
+      - TZ=Asia/Shanghai
+      - POSTGRES_DB=picimpact
+      - POSTGRES_USER=picimpact
+      - POSTGRES_PASSWORD=q70e2sqYYjnAwCtB
+    binds:
+      # 与镜像 Config.Volumes 完全对齐，避免匿名卷盖住持久目录。
+      - /lzcapp/var/data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U picimpact -d picimpact"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # 内置对象存储（RustFS，S3 兼容；S3 API :9000，控制台 :9001 仅容器网络内）。
+  # 以 root 运行：镜像默认用户 rustfs(10001)，但平台 run_as 的 idmapped 挂载在
+  # 本盒子复现 EOVERFLOW（zammad 同类问题，见 方法文档/03）；改为 user: "0"
+  # 让对象存储直接以 root 写持久目录，避免依赖 idmapped 映射。
+  picimpact-s3:
+    image: registry.lazycat.cloud/wans/rustfs/rustfs:f57f2d708addf7a2
+    user: "0"
+    environment:
+      - TZ=Asia/Shanghai
+      - RUSTFS_ACCESS_KEY=picimpact
+      - RUSTFS_SECRET_KEY=7UF2VPoeMz6moQdu
+    binds:
+      - /lzcapp/var/data/rustfs:/data
+    healthcheck:
+      test: [CMD-SHELL, "wget -q -O /dev/null http://127.0.0.1:9000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # 入口 nginx：按路径分流（/picimpact/* → 对象存储；其余 → 应用），并提供 /healthz。
+  # depends_on 保证首次启动顺序（应用健康后 nginx 才启动）；
+  # nginx 配置自身使用 resolver + 变量上游，容器重启竞态时也不会因解析失败而退出。
+  picimpact-web:
+    image: registry.lazycat.cloud/wans/library/nginx:098fb79c84151799
+    environment:
+      - TZ=Asia/Shanghai
+    entrypoint: /bin/sh
+    command: /lzcapp/pkg/content/picimpact-init/nginx-boot.sh
+    depends_on:
+      - picimpact
+    healthcheck:
+      test: [CMD-SHELL, "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s

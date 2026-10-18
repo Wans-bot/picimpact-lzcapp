@@ -1,0 +1,90 @@
+package: cloud.lazycat.app.picimpact
+version: 3.3.8-6
+name: PicImpact 摄影作品站
+description: 自托管的摄影作品展示网站：相册、标签、EXIF、地图与完整后台，照片保存在自己的微服上。
+author: Bess Croft
+license: MIT
+homepage: https://github.com/besscroft/PicImpact
+min_os_version: 1.6.0
+
+permissions:
+  required:
+    - net.internet
+
+locales:
+  zh-CN:
+    name: PicImpact 摄影作品站
+    description: 自托管的摄影作品展示网站：相册、标签、EXIF、地图与完整后台，照片保存在自己的微服上。
+    usage: |
+      PicImpact 是一套摄影作品展示网站：把照片传进自己的微服，按相册/标签组织，
+      自动读取 EXIF 与拍摄位置（地图展示），并可切换到「宝丽来」等多种展示风格。
+      数据库与图片都保存在本机，重启和升级不会丢失。
+
+      首次使用：
+
+      1. 打开应用会自动完成登录（不需要手输账号密码），并进入后台管理界面。
+      2. 界面默认简体中文。左侧菜单：仪表盘、相册、图片、上传、系统设置。
+      3. 上传照片：进入「上传」→ 拖入或选择文件 → 上传完成后到「图片」里编辑标题、
+         标签、所属相册与是否首页展示。首页即是作品展示页（默认「默认模式」，
+         可在系统设置里切换「简单模式 / 宝丽来模式」）。
+      4. 图片存储已内置好（对象存储），不需要你配置任何存储参数。
+
+      审核账号（应用自身登录，与微服账号无关；正常情况下无需手输）：
+
+      - 账号：admin@picimpact.local
+      - 密码：I6yStSzApaEEmaLC
+
+      账号切换：右下角有「切换账号」按钮，点击后退出当前登录并停用本会话的自动登录，
+      可手动输入其他账号；登录页可点「启用自动登录」恢复免密。
+
+      文件与网盘：
+
+      - 上传：选择文件时弹出统一窗口，可切换「网盘文件 / 本地文件」两种来源；
+      - 导出/下载：图片「下载原图」为同一窗口的保存流程，可直接保存到懒猫网盘。
+
+      说明：
+
+      - 图片直链位于应用域名的 /picimpact/ 路径下：该路径由平台独立放行（只读匿名、
+        写入需存储签名），其余页面仍受微服账号体系保护。
+      - 网站标题、favicon、归属者名称、每页数量等在「系统设置」中修改。
+
+  en-US:
+    name: PicImpact
+    description: A self-hosted photography portfolio site with albums, tags, EXIF, maps and a full admin panel, storing photos on your own box.
+    usage: |
+      PicImpact is a self-hosted photography showcase: upload photos to your box, organize them
+      with albums and tags, browse EXIF and shooting locations on a map, and switch between
+      display styles (default / simple / polaroid). The database and photos stay on your box
+      and survive restarts and upgrades.
+
+      Getting started:
+
+      1. Opening the app signs you in automatically (no username/password typing needed) and
+         lands on the admin dashboard.
+      2. The UI defaults to Simplified Chinese. The sidebar has Dashboard, Albums, Images,
+         Upload and Settings.
+      3. Upload photos under "Upload", then edit title, tags, album membership and homepage
+         visibility under "Images". The homepage is the public gallery.
+      4. Image storage is pre-configured (built-in object storage); no storage setup needed.
+
+      Review account (the app's own login, unrelated to your box account; normally not needed):
+
+      - Email: admin@picimpact.local
+      - Password: I6yStSzApaEEmaLC
+
+      Account switching: a "切换账号 (switch account)" button in the lower-right corner signs out
+      and disables auto-login for the session; the login page can re-enable it.
+
+      Files and the cloud disk:
+
+      - Uploads: selecting files opens a unified window where you can pick "cloud disk file" or
+        "local file".
+      - Downloads: "download original" saves through the same window, including to the Lazycat
+        cloud disk.
+
+      Notes:
+
+      - Image direct links live under the /picimpact/ path of the app domain. That path is
+        independently released by the platform (anonymous read, signed writes); all other pages
+        remain protected by the box account system.
+      - Site title, favicon, author name and page sizes are configurable under Settings.
